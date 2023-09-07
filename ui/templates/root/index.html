@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Index{% endblock title %}
+{% block content %}
+<div class="lg:max-w-lg mx-auto h-[50vh] md:h-[70vh] flex items-center">
+  <div x-data="{ searchVal: ''}" class="w-full">
+    <div>
+      <label for="search" class="block text-sm font-medium leading-6 text-gray-900">Quick search</label>
+      <div class="relative mt-2 flex items-center">
+        <input x-model="searchVal" type="text" name="search" id="search" class="block w-full rounded-md border-0 py-1.5 pr-14 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-gray-600 sm:text-sm sm:leading-6">
+      </div>
+    </div>
+    <a 
+      x-bind:href="'/search?value=' + searchVal"
+      x-bind:style="searchVal === '' ? 'pointer-events: none;':''"
+      x-bind:class="searchVal === '' ? 'text-gray-400':'bg-white text-gray-900'"
+      class="block text-center w-full mt-3 rounded-md px-2.5 py-1.5 text-sm font-semibold shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
+    >
+      Search
+    </a>
+  </div>
+</div>
+{% endblock content %}

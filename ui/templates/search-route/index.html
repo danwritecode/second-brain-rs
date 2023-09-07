@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Index{% endblock title %}
+{% block content %}
+<div class="max-w-lg mx-auto flex items-center">
+  <div>
+    <h1 class="text-xl font-medium text-gray-700">Results</h1>
+    <ul class="space-y-3 mt-5">
+      {% for r in results %}
+        <li v-for="r in searchResponse" :key="r.id">
+          <div class="flex items-center space-x-3 rounded-lg border border-gray-300 bg-white px-6 py-5 shadow-sm">
+            <p class="text-gray-600 text-sm">{{ r.body }}</p>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+</div>
+{% endblock content %}
