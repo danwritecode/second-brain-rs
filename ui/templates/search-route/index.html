@@ -15,5 +15,17 @@
     </ul>
   </div>
 
+  <div hx-ext="ws" ws-connect="/ws" class="mt-20">
+    <div id="notifications" hx-swap-oob="beforeend">
+      New message received
+    </div>
+    <div id="chat" hx-swap-oob="morphdom">
+      ....
+    </div>
+    <form id="form" ws-send>
+      <input name="message">
+    </form>
+  </div>
+
 </div>
 {% endblock content %}

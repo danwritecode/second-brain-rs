@@ -6,16 +6,17 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,600&family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">
   <link href="/css" rel="stylesheet">
+  <script src="/js?v={{ cargo_version }}"></script>
+  <script src="https://unpkg.com/htmx.org/dist/ext/ws.js"></script>
+  {% block head %}
+  <title>{% block title %}{% endblock title %}</title>
+  {% endblock head %}
   <style>
     html {
       font-family: 'JetBrains Mono', monospace;
       font-family: 'Roboto', sans-serif;
     } 
   </style>
-  <script src="/js?v={{ cargo_version }}"></script>
-  {% block head %}
-  <title>{% block title %}{% endblock title %}</title>
-  {% endblock head %}
 </head>
 <body class="bg-slate-50">
   <nav class="mx-auto max-w-7xl px-4 py-4">
