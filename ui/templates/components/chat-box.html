@@ -1,0 +1,15 @@
+<div id="messages" hx-swap-oob="beforeend" class="p-4 mt-5 bg-gray-200 h-5/6 w-full rounded-lg overflow-y-scroll">
+  {% if user %}
+    <div class="mb-2 flex justify-start w-full">
+      <p class="text-sm bg-blue-500 text-gray-700 p-2 text-white max-w-xs rounded-lg">
+        {{ message }}  
+      </p>
+    </div>
+  {% else %}
+    <div class="mb-2 flex justify-end w-full">
+      <p class="text-sm bg-gray-700 text-gray-700 p-2 text-white max-w-xs rounded-lg">
+        {{ message }}  
+      </p>
+    </div>
+  {% endif %}
+</div>

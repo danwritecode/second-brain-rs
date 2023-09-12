@@ -20,30 +20,41 @@ impl ChatService {
         Ok(ChatService {})
     }
 
-    pub async fn chat(&self, user_message: &str, system_message: &str) -> Result<()> {
-        let mut messages = vec![
+    pub fn get_base_messages(system_message: &str) -> Vec<ChatCompletionMessage> {
+        let messages = vec![
             ChatCompletionMessage {
                 role: ChatCompletionMessageRole::System,
                 content: Some(system_message.to_string()),
                 name: None,
                 function_call: None,
             },
-            ChatCompletionMessage {
-                role: ChatCompletionMessageRole::User,
-                content: Some(user_message.to_string()),
-                name: None,
-                function_call: None,
-            }
         ];
 
-        let chat_stream = ChatCompletionDelta::builder("gpt-4", messages.clone()).create_stream().await?;
+        messages
+    }
+
+    pub async fn chat(&self, user_message: &str, messages: &mut Vec<ChatCompletionMessage>) -> Result<()> {
+        let user_message = ChatCompletionMessage {
+            role: ChatCompletionMessageRole::User,
+            content: Some(user_message.to_string()),
+            name: None,
+            function_call: None,
+        };
+
+        messages.push(user_message);
+
+        println!("messages before: {:#?}", messages);
+
+        let chat_stream = ChatCompletionDelta::builder("gpt-3.5-turbo-16k", messages.clone()).create_stream().await?;
 
         let chat_completion: ChatCompletion = self.listen_for_tokens(chat_stream).await?;
         let returned_message = chat_completion.choices.first().unwrap().message.clone();
 
         messages.push(returned_message);
+
+        println!("messages after: {:#?}", messages);
         
-        unimplemented!()
+        Ok(())
     }
 
     async fn listen_for_tokens(&self, mut chat_stream: Receiver<ChatCompletionDelta>) -> Result<ChatCompletion> {
@@ -61,6 +72,7 @@ impl ChatService {
                 print!("\n");
             }
             stdout().flush()?;
+
             // Merge completion into accrued.
             match merged.as_mut() {
                 Some(c) => {

@@ -8,6 +8,7 @@ use axum::{
     extract::{Query, ConnectInfo, ws::CloseFrame}
 };
 
+use openai::chat::ChatCompletionMessage;
 use tower_livereload::LiveReloadLayer;
 use std::{net::SocketAddr, collections::HashMap, borrow::Cow, ops::ControlFlow};
 use anyhow::anyhow;
@@ -24,6 +25,8 @@ mod services;
 mod models;
 
 use services::SearchService;
+
+use crate::{models::general::ChatWsRequest, services::ChatService};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -84,19 +87,9 @@ async fn search_route(Query(params): Query<HashMap<String, String>>) -> Result<H
     Ok(Html(rendered))
 }
 
-
-// async fn ws_handler(
-    // ws: WebSocketUpgrade,
-    // ConnectInfo(addr): ConnectInfo<SocketAddr>,
-// ) -> impl IntoResponse {
-//     println!("Websocket request received");
-//     ws.on_upgrade(move |socket| handle_socket(socket, addr))
-// }
-
 async fn ws_handler(
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    println!("Websocket request received");
     ws.on_upgrade(move |socket| handle_socket(socket))
 }
 
@@ -108,13 +101,17 @@ async fn handle_socket(mut socket: WebSocket) {
         println!("Could not send ping!");
         return;
     }
+
     
     tokio::spawn(async move {
+        let mut messages = ChatService::get_base_messages(
+            "you are omniscient and really kind and friendly, you possess infinite wisdom and patience"
+        );
+
         while let Some(Ok(msg)) = socket.recv().await {
-            if process_message(msg).is_break() {
+            if process_message(msg, &mut socket, &mut messages).await.is_break() {
                 break;
             }
-            socket.send(Message::Text("<p>response from ws</p>".to_string())).await.unwrap();
         }
     });
 
@@ -123,13 +120,43 @@ async fn handle_socket(mut socket: WebSocket) {
 }
 
 /// helper to print contents of messages to stdout. Has special treatment for Close.
-fn process_message(msg: Message) -> ControlFlow<(), ()> {
+async fn process_message(msg: Message, socket: &mut WebSocket, messages: &mut Vec<ChatCompletionMessage>) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => {
-            println!(">>> received str: {:?}", t);
-        }
-        Message::Binary(d) => {
-            println!(">>> received {} bytes: {:?}", d.len(), d);
+            let ws_req:ChatWsRequest = serde_json::from_str(&t[..]).unwrap();
+
+            let mut sys_context = Context::new();
+            sys_context.insert("user", &true);
+            sys_context.insert("message", &ws_req.chat);
+            sys_context.insert("word", &"");
+
+            // take chat and send to gpt-4
+            let rendered = render_with_global_context("components/chat-box-empty.html", &sys_context).unwrap();
+            socket.send(Message::Text(rendered.clone())).await.unwrap();
+            
+            let chat_service = ChatService::new().unwrap();
+            chat_service.chat(&ws_req.chat[..], messages).await.unwrap();
+
+            let mut usr_context = Context::new();
+
+            let message = messages.last().unwrap().content.clone().unwrap();
+
+            let words = message.split(" ").map(|n| n.to_string()).collect::<Vec<String>>();
+
+            for w in words {
+                let mut loop_context = Context::new();
+                loop_context.insert("user", &false);
+                loop_context.insert("word", &w);
+                let rendered = render_with_global_context("components/chat-box-stream.html", &loop_context).unwrap();
+                socket.send(Message::Text(rendered.clone())).await.unwrap();
+            }
+
+
+            // usr_context.insert("user", &false);
+            // usr_context.insert("message", &message);
+            // let rendered = render_with_global_context("components/chat-box.html", &usr_context).unwrap();
+            //
+            // socket.send(Message::Text(rendered.clone())).await.unwrap();
         }
         Message::Close(c) => {
             if let Some(cf) = c {
@@ -142,16 +169,7 @@ fn process_message(msg: Message) -> ControlFlow<(), ()> {
             }
             return ControlFlow::Break(());
         }
-
-        Message::Pong(v) => {
-            println!(">>> received pong with {:?}", v);
-        }
-        // You should never need to manually handle Message::Ping, as axum's websocket library
-        // will do so for you automagically by replying with Pong and copying the v according to
-        // spec. But if you need the contents of the pings you can see them here.
-        Message::Ping(v) => {
-            println!(">>> received ping with {:?}", v);
-        }
+        _ => ()
     }
     ControlFlow::Continue(())
 }
