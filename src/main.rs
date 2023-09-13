@@ -1,18 +1,17 @@
 use axum::{
-    TypedHeader,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     routing::{get, post},
     Router,
     response::{Html, IntoResponse, Result, Response}, 
     http::{HeaderMap, header, StatusCode}, 
-    extract::{Query, ConnectInfo, ws::CloseFrame}
+    extract::Query
 };
 
 use openai::chat::ChatCompletionMessage;
+use tokio::sync::Mutex;
 use tower_livereload::LiveReloadLayer;
-use std::{net::SocketAddr, collections::HashMap, borrow::Cow, ops::ControlFlow};
+use std::{net::SocketAddr, collections::HashMap, ops::ControlFlow, sync::Arc};
 use anyhow::anyhow;
-use serde::Deserialize;
 
 #[macro_use]
 extern crate lazy_static;
@@ -104,74 +103,75 @@ async fn handle_socket(mut socket: WebSocket) {
 
     
     tokio::spawn(async move {
-        let mut messages = ChatService::get_base_messages(
+        let messages = ChatService::get_base_messages(
             "you are omniscient and really kind and friendly, you possess infinite wisdom and patience"
         );
 
+        let messages = Arc::new(Mutex::new(messages));
+
         while let Some(Ok(msg)) = socket.recv().await {
-            if process_message(msg, &mut socket, &mut messages).await.is_break() {
+            if process_message(msg, &mut socket, messages.clone()).await.unwrap().is_break() {
                 break;
             }
         }
     });
-
-    // returning from the handler closes the websocket connection
-    println!("Websocket context destroyed");
 }
 
 /// helper to print contents of messages to stdout. Has special treatment for Close.
-async fn process_message(msg: Message, socket: &mut WebSocket, messages: &mut Vec<ChatCompletionMessage>) -> ControlFlow<(), ()> {
+async fn process_message(msg: Message, socket: &mut WebSocket, messages: Arc<Mutex<Vec<ChatCompletionMessage>>>) -> anyhow::Result<ControlFlow<(), ()>> {
     match msg {
         Message::Text(t) => {
-            let ws_req:ChatWsRequest = serde_json::from_str(&t[..]).unwrap();
+            let chat_num = messages.lock().await.len(); // needed for htmx rendering
 
-            let mut sys_context = Context::new();
-            sys_context.insert("user", &true);
-            sys_context.insert("message", &ws_req.chat);
-            sys_context.insert("word", &"");
+            // extract websocket text from request
+            let ws_req:ChatWsRequest = serde_json::from_str(t.as_str())?;
 
-            // take chat and send to gpt-4
-            let rendered = render_with_global_context("components/chat-box-empty.html", &sys_context).unwrap();
-            socket.send(Message::Text(rendered.clone())).await.unwrap();
-            
-            let chat_service = ChatService::new().unwrap();
-            chat_service.chat(&ws_req.chat[..], messages).await.unwrap();
+            // render initial conversation state
+            let mut template_ctx = Context::new();
+            template_ctx.insert("message", &ws_req.chat);
+            template_ctx.insert("chat_num", &chat_num);
+            let rendered = render_with_global_context("components/chat-box.html", &template_ctx)?;
+            socket.send(Message::Text(rendered.clone())).await?;
 
-            let mut usr_context = Context::new();
+            // initiate chat service
+            let word_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+            let is_complete: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
-            let message = messages.last().unwrap().content.clone().unwrap();
+            // create ptrs to move to new thread
+            let buff_ptr = word_buffer.clone();
+            let is_complete_ptr = is_complete.clone();
 
-            let words = message.split(" ").map(|n| n.to_string()).collect::<Vec<String>>();
+            tokio::spawn(async move {
+                let chat_service = ChatService::new().unwrap(); // can't use ? here
+                chat_service.chat("gpt-4", ws_req.chat.as_str(), is_complete_ptr, messages, buff_ptr).await.unwrap();
+            });
 
-            for w in words {
-                let mut loop_context = Context::new();
-                loop_context.insert("user", &false);
-                loop_context.insert("word", &w);
-                let rendered = render_with_global_context("components/chat-box-stream.html", &loop_context).unwrap();
-                socket.send(Message::Text(rendered.clone())).await.unwrap();
+            // loop over word buffer, return via websocket
+            // and empty buffer as we go
+            while !*is_complete.lock().await {
+                let mut words = word_buffer.lock().await;
+                if words.len() > 0 {
+                    let mut template_ctx = Context::new();
+                    let context_words = words.join("");
+                    template_ctx.insert("word", &context_words);
+
+                    // empty words
+                    words.clear();
+
+                    template_ctx.insert("chat_num", &chat_num);
+                    let rendered = render_with_global_context("components/sys-response.html", &template_ctx)?;
+                    socket.send(Message::Text(rendered.clone())).await?;
+                }
+
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-
-
-            // usr_context.insert("user", &false);
-            // usr_context.insert("message", &message);
-            // let rendered = render_with_global_context("components/chat-box.html", &usr_context).unwrap();
-            //
-            // socket.send(Message::Text(rendered.clone())).await.unwrap();
         }
-        Message::Close(c) => {
-            if let Some(cf) = c {
-                println!(
-                    ">>> received close with code {} and reason `{}`",
-                    cf.code, cf.reason
-                );
-            } else {
-                println!(">>> somehow sent close message without CloseFrame");
-            }
-            return ControlFlow::Break(());
+        Message::Close(_c) => {
+            return Ok(ControlFlow::Break(()));
         }
         _ => ()
     }
-    ControlFlow::Continue(())
+    Ok(ControlFlow::Continue(()))
 }
 
 async fn clicked_uix() -> Result<Html<String>, AppError> {
@@ -181,7 +181,6 @@ async fn clicked_uix() -> Result<Html<String>, AppError> {
 lazy_static! {
     pub static ref TEMPLATES: Tera = {
         let tera = Tera::new("ui/templates/**/*").unwrap();
-
         return tera;
     };
 }

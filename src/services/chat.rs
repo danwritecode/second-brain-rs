@@ -1,13 +1,12 @@
-use openai::{chat::{self, ChatCompletionMessage, ChatCompletionMessageRole, ChatCompletionDelta, ChatCompletion}, set_key};
+use openai::{chat::{ChatCompletionMessage, ChatCompletionMessageRole, ChatCompletionDelta, ChatCompletion}, set_key};
 use dotenv::dotenv;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 use std::{
-    env,
-    io::{stdin, stdout, Write},
+    io::{stdout, Write}, sync::Arc,
 };
 
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::{mpsc::Receiver, Mutex};
 
 pub struct ChatService {
 }
@@ -33,7 +32,14 @@ impl ChatService {
         messages
     }
 
-    pub async fn chat(&self, user_message: &str, messages: &mut Vec<ChatCompletionMessage>) -> Result<()> {
+    pub async fn chat(
+        &self, 
+        model: &str,
+        user_message: &str, 
+        is_complete: Arc<Mutex<bool>>,
+        messages: Arc<Mutex<Vec<ChatCompletionMessage>>>,
+        word_buffer: Arc<Mutex<Vec<String>>>
+    ) -> Result<()> {
         let user_message = ChatCompletionMessage {
             role: ChatCompletionMessageRole::User,
             content: Some(user_message.to_string()),
@@ -41,37 +47,29 @@ impl ChatService {
             function_call: None,
         };
 
-        messages.push(user_message);
+        let mut messages_foo = messages.lock().await;
+        messages_foo.push(user_message);
 
-        println!("messages before: {:#?}", messages);
-
-        let chat_stream = ChatCompletionDelta::builder("gpt-3.5-turbo-16k", messages.clone()).create_stream().await?;
-
-        let chat_completion: ChatCompletion = self.listen_for_tokens(chat_stream).await?;
+        let chat_stream = ChatCompletionDelta::builder(model, messages_foo.clone()).create_stream().await?;
+        let chat_completion: ChatCompletion = self.listen_for_tokens(chat_stream, word_buffer).await?;
         let returned_message = chat_completion.choices.first().unwrap().message.clone();
 
-        messages.push(returned_message);
+        messages_foo.push(returned_message);
 
-        println!("messages after: {:#?}", messages);
-        
+        let mut is_complete = is_complete.lock().await;
+        *is_complete = true;
+
         Ok(())
     }
 
-    async fn listen_for_tokens(&self, mut chat_stream: Receiver<ChatCompletionDelta>) -> Result<ChatCompletion> {
+    async fn listen_for_tokens(&self, mut chat_stream: Receiver<ChatCompletionDelta>, word_buffer: Arc<Mutex<Vec<String>>>) -> Result<ChatCompletion> {
         let mut merged: Option<ChatCompletionDelta> = None;
         while let Some(delta) = chat_stream.recv().await {
             let choice = &delta.choices[0];
-            if let Some(role) = &choice.delta.role {
-                print!("{:#?}: ", role);
-            }
             if let Some(content) = &choice.delta.content {
-                print!("{}", content);
+                let mut buff = word_buffer.lock().await;
+                buff.push(content.clone());
             }
-            if let Some(_) = &choice.finish_reason {
-                // The message being streamed has been fully received.
-                print!("\n");
-            }
-            stdout().flush()?;
 
             // Merge completion into accrued.
             match merged.as_mut() {
