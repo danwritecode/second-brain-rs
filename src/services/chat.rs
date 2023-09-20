@@ -19,19 +19,6 @@ impl ChatService {
         Ok(ChatService {})
     }
 
-    pub fn get_base_messages(system_message: &str) -> Vec<ChatCompletionMessage> {
-        let messages = vec![
-            ChatCompletionMessage {
-                role: ChatCompletionMessageRole::System,
-                content: Some(system_message.to_string()),
-                name: None,
-                function_call: None,
-            },
-        ];
-
-        messages
-    }
-
     pub fn gen_sys_message(system_message: &str) -> ChatCompletionMessage {
         let message = ChatCompletionMessage {
                 role: ChatCompletionMessageRole::System,

@@ -214,7 +214,8 @@ async fn render_ws_response(
     while !*is_complete.lock().await {
         let mut words = word_buffer.lock().await;
         if words.len() > 0 {
-            let mut template_ctx = Context::new(); let context_words = words.join("");
+            let mut template_ctx = Context::new(); 
+            let context_words = words.join("");
             template_ctx.insert("word", &context_words);
 
             // empty words
