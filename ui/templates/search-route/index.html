@@ -50,5 +50,12 @@
 
   observer.observe(targetNode, config);
 
+  const searchResults = {{ results_state | safe }}
+
+  document.addEventListener('htmx:wsConfigSend', function(event) {
+    var wsConfig = event.detail
+    wsConfig.parameters['context'] = searchResults.map(r => r.body)
+  });
+
 </script>
 {% endblock content %}

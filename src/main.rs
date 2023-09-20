@@ -78,9 +78,11 @@ async fn search_route(Query(params): Query<HashMap<String, String>>) -> Result<H
     // search
     let search = SearchService::new().await?;
     let results = search.search(search_val, 5).await?;
+    let results_state = serde_json::to_string(&results)?;
 
     let mut context = Context::new();
     context.insert("results", &results);
+    context.insert("results_state", &results_state);
     let rendered = render_with_global_context("search-route/index.html", &context)?;
     
     Ok(Html(rendered))
@@ -94,21 +96,14 @@ async fn ws_handler(
 
 /// Actual websocket statemachine (one will be spawned per connection)
 async fn handle_socket(mut socket: WebSocket) {
-    if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
-        println!("Pinged...");
-    } else {
-        println!("Could not send ping!");
-        return;
-    }
-
-    
     tokio::spawn(async move {
+        // create messages, this will live for the lifetime
+        // of the websockets existence, so it will get added to over time
         let messages = ChatService::get_base_messages(
             "you are omniscient and really kind and friendly, you possess infinite wisdom and patience"
         );
 
         let messages = Arc::new(Mutex::new(messages));
-
         while let Some(Ok(msg)) = socket.recv().await {
             if process_message(msg, &mut socket, messages.clone()).await.unwrap().is_break() {
                 break;
@@ -117,8 +112,11 @@ async fn handle_socket(mut socket: WebSocket) {
     });
 }
 
-/// helper to print contents of messages to stdout. Has special treatment for Close.
-async fn process_message(msg: Message, socket: &mut WebSocket, messages: Arc<Mutex<Vec<ChatCompletionMessage>>>) -> anyhow::Result<ControlFlow<(), ()>> {
+async fn process_message(
+    msg: Message, 
+    socket: &mut WebSocket, 
+    messages: Arc<Mutex<Vec<ChatCompletionMessage>>>
+) -> anyhow::Result<ControlFlow<(), ()>> {
     match msg {
         Message::Text(t) => {
             let chat_num = messages.lock().await.len(); // needed for htmx rendering
@@ -133,7 +131,7 @@ async fn process_message(msg: Message, socket: &mut WebSocket, messages: Arc<Mut
             let rendered = render_with_global_context("components/chat-box.html", &template_ctx)?;
             socket.send(Message::Text(rendered.clone())).await?;
 
-            // initiate chat service
+            // create arc/mutex to pass to chat service
             let word_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
             let is_complete: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
@@ -142,8 +140,16 @@ async fn process_message(msg: Message, socket: &mut WebSocket, messages: Arc<Mut
             let is_complete_ptr = is_complete.clone();
 
             tokio::spawn(async move {
+                // initiate chat service
                 let chat_service = ChatService::new().unwrap(); // can't use ? here
-                chat_service.chat("gpt-4", ws_req.chat.as_str(), is_complete_ptr, messages, buff_ptr).await.unwrap();
+                chat_service.chat(
+                    "gpt-3.5-turbo", 
+                    ws_req.chat.as_str(), 
+                    serde_json::to_string(&ws_req.context).unwrap().as_str(),
+                    is_complete_ptr, 
+                    messages, 
+                    buff_ptr
+                ).await.unwrap();
             });
 
             // loop over word buffer, return via websocket

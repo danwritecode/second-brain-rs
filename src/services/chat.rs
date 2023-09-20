@@ -36,25 +36,30 @@ impl ChatService {
         &self, 
         model: &str,
         user_message: &str, 
+        context: &str,
         is_complete: Arc<Mutex<bool>>,
         messages: Arc<Mutex<Vec<ChatCompletionMessage>>>,
         word_buffer: Arc<Mutex<Vec<String>>>
     ) -> Result<()> {
         let user_message = ChatCompletionMessage {
             role: ChatCompletionMessageRole::User,
-            content: Some(user_message.to_string()),
+            // content: Some(user_message.to_string()),
+            content: Some(format!("
+                Context from search: {},
+                user message: {}
+            ", context, user_message)),
             name: None,
             function_call: None,
         };
 
-        let mut messages_foo = messages.lock().await;
-        messages_foo.push(user_message);
+        let mut messages_compiled = messages.lock().await;
+        messages_compiled.push(user_message);
 
-        let chat_stream = ChatCompletionDelta::builder(model, messages_foo.clone()).create_stream().await?;
+        let chat_stream = ChatCompletionDelta::builder(model, messages_compiled.clone()).create_stream().await?;
         let chat_completion: ChatCompletion = self.listen_for_tokens(chat_stream, word_buffer).await?;
         let returned_message = chat_completion.choices.first().unwrap().message.clone();
 
-        messages_foo.push(returned_message);
+        messages_compiled.push(returned_message);
 
         let mut is_complete = is_complete.lock().await;
         *is_complete = true;

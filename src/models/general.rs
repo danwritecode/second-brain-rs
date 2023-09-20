@@ -6,6 +6,7 @@ use serde_json::Value;
 #[serde(rename_all = "camelCase")]
 pub struct ChatWsRequest {
     pub chat: String,
+    pub context: Vec<String>,
     #[serde(rename = "HEADERS")]
     pub headers: ChatWsRequestHeaders,
 }
