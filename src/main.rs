@@ -99,11 +99,9 @@ async fn handle_socket(mut socket: WebSocket) {
     tokio::spawn(async move {
         // create messages, this will live for the lifetime
         // of the websockets existence, so it will get added to over time
-        let messages = ChatService::get_base_messages(
-            "you are omniscient and really kind and friendly, you possess infinite wisdom and patience"
-        );
-
+        let messages: Vec<ChatCompletionMessage> = vec![];
         let messages = Arc::new(Mutex::new(messages));
+
         while let Some(Ok(msg)) = socket.recv().await {
             if process_message(msg, &mut socket, messages.clone()).await.unwrap().is_break() {
                 break;
@@ -119,58 +117,23 @@ async fn process_message(
 ) -> anyhow::Result<ControlFlow<(), ()>> {
     match msg {
         Message::Text(t) => {
-            let chat_num = messages.lock().await.len(); // needed for htmx rendering
-
             // extract websocket text from request
+            let chat_num = messages.lock().await.len();
             let ws_req:ChatWsRequest = serde_json::from_str(t.as_str())?;
 
+            // set system context
+            set_system_context(messages.clone(), ws_req.context).await;
+
             // render initial conversation state
-            let mut template_ctx = Context::new();
-            template_ctx.insert("message", &ws_req.chat);
-            template_ctx.insert("chat_num", &chat_num);
-            let rendered = render_with_global_context("components/chat-box.html", &template_ctx)?;
-            socket.send(Message::Text(rendered.clone())).await?;
+            render_initial_chat_state(socket, chat_num, ws_req.chat.clone()).await?;
 
-            // create arc/mutex to pass to chat service
-            let word_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+            // create chat service and states
             let is_complete: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+            let word_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+            initiate_chat(messages, ws_req.chat.clone(), word_buffer.clone(), is_complete.clone()).await?;
 
-            // create ptrs to move to new thread
-            let buff_ptr = word_buffer.clone();
-            let is_complete_ptr = is_complete.clone();
-
-            tokio::spawn(async move {
-                // initiate chat service
-                let chat_service = ChatService::new().unwrap(); // can't use ? here
-                chat_service.chat(
-                    "gpt-3.5-turbo", 
-                    ws_req.chat.as_str(), 
-                    serde_json::to_string(&ws_req.context).unwrap().as_str(),
-                    is_complete_ptr, 
-                    messages, 
-                    buff_ptr
-                ).await.unwrap();
-            });
-
-            // loop over word buffer, return via websocket
-            // and empty buffer as we go
-            while !*is_complete.lock().await {
-                let mut words = word_buffer.lock().await;
-                if words.len() > 0 {
-                    let mut template_ctx = Context::new();
-                    let context_words = words.join("");
-                    template_ctx.insert("word", &context_words);
-
-                    // empty words
-                    words.clear();
-
-                    template_ctx.insert("chat_num", &chat_num);
-                    let rendered = render_with_global_context("components/sys-response.html", &template_ctx)?;
-                    socket.send(Message::Text(rendered.clone())).await?;
-                }
-
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
+            // output to websocket
+            render_ws_response(socket, word_buffer, is_complete, chat_num).await?;
         }
         Message::Close(_c) => {
             return Ok(ControlFlow::Break(()));
@@ -178,6 +141,94 @@ async fn process_message(
         _ => ()
     }
     Ok(ControlFlow::Continue(()))
+}
+
+async fn set_system_context(
+    messages: Arc<Mutex<Vec<ChatCompletionMessage>>>,
+    context: Vec<String>
+) {
+    let mut messages_access = messages.lock().await; // needed for htmx rendering
+    if messages_access.len() == 0 {
+        let message = ChatService::gen_sys_message(format!("
+            I am going to provide you with some context that came from search results.
+            This context is relevant to the conversation and should be used. It should also
+            have priority over your existing base of knowledge.
+
+            You are also omniscient and so incredible smart and brilliant in every field and
+            please remember that I love you <3.
+
+            Search Context: {:?}
+        ", context).as_str());
+
+        messages_access.push(message);
+    }
+}
+
+async fn render_initial_chat_state(
+    socket: &mut WebSocket, 
+    chat_num: usize,
+    chat: String
+) -> anyhow::Result<()> {
+    let mut template_ctx = Context::new();
+    template_ctx.insert("message", &chat);
+    template_ctx.insert("chat_num", &chat_num);
+    let rendered = render_with_global_context("components/chat-box.html", &template_ctx)?;
+    socket.send(Message::Text(rendered.clone())).await?;
+    Ok(())
+}
+
+async fn initiate_chat(
+    messages: Arc<Mutex<Vec<ChatCompletionMessage>>>,
+    chat: String,
+    word_buffer: Arc<Mutex<Vec<String>>>,
+    is_complete: Arc<Mutex<bool>>
+) -> anyhow::Result<()> {
+    // create ptrs to move to new thread
+    let buff_ptr = word_buffer.clone();
+    let is_complete_ptr = is_complete.clone();
+    let messages_ptr = messages.clone();
+
+    tokio::spawn(async move {
+        // initiate chat service
+        let chat_service = ChatService::new().unwrap(); // can't use ? here
+        chat_service.chat(
+            "gpt-3.5-turbo", 
+            chat.as_str(), 
+            messages_ptr, 
+            is_complete_ptr, 
+            buff_ptr
+        ).await.unwrap();
+    });
+
+    Ok(())
+}
+
+async fn render_ws_response(
+    socket: &mut WebSocket, 
+    word_buffer: Arc<Mutex<Vec<String>>>,
+    is_complete: Arc<Mutex<bool>>,
+    chat_num: usize
+) -> anyhow::Result<()> {
+    // loop over word buffer, return via websocket
+    // and empty buffer as we go
+    while !*is_complete.lock().await {
+        let mut words = word_buffer.lock().await;
+        if words.len() > 0 {
+            let mut template_ctx = Context::new(); let context_words = words.join("");
+            template_ctx.insert("word", &context_words);
+
+            // empty words
+            words.clear();
+
+            template_ctx.insert("chat_num", &chat_num);
+            let rendered = render_with_global_context("components/sys-response.html", &template_ctx)?;
+            socket.send(Message::Text(rendered.clone())).await?;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    Ok(())
 }
 
 async fn clicked_uix() -> Result<Html<String>, AppError> {

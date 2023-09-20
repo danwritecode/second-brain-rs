@@ -32,25 +32,37 @@ impl ChatService {
         messages
     }
 
+    pub fn gen_sys_message(system_message: &str) -> ChatCompletionMessage {
+        let message = ChatCompletionMessage {
+                role: ChatCompletionMessageRole::System,
+                content: Some(system_message.to_string()),
+                name: None,
+                function_call: None,
+        };
+
+        message
+    }
+
+    pub fn gen_user_message(user_message: &str) -> ChatCompletionMessage {
+        let message = ChatCompletionMessage {
+                role: ChatCompletionMessageRole::User,
+                content: Some(user_message.to_string()),
+                name: None,
+                function_call: None,
+        };
+
+        message
+    }
+
     pub async fn chat(
         &self, 
         model: &str,
         user_message: &str, 
-        context: &str,
-        is_complete: Arc<Mutex<bool>>,
         messages: Arc<Mutex<Vec<ChatCompletionMessage>>>,
+        is_complete: Arc<Mutex<bool>>,
         word_buffer: Arc<Mutex<Vec<String>>>
     ) -> Result<()> {
-        let user_message = ChatCompletionMessage {
-            role: ChatCompletionMessageRole::User,
-            // content: Some(user_message.to_string()),
-            content: Some(format!("
-                Context from search: {},
-                user message: {}
-            ", context, user_message)),
-            name: None,
-            function_call: None,
-        };
+        let user_message = ChatService::gen_user_message(user_message);
 
         let mut messages_compiled = messages.lock().await;
         messages_compiled.push(user_message);
