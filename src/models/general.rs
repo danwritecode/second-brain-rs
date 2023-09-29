@@ -26,3 +26,11 @@ pub struct ChatWsRequestHeaders {
     pub hx_current_url: String,
 }
 
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewEmbeddingRequest {
+    #[serde(rename = "embedding-doc")]
+    pub doc_name: String,
+    #[serde(rename = "embedding-text")]
+    pub embedding_text: String,
+}

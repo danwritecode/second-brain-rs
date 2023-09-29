@@ -13,10 +13,11 @@
       x-bind:href="'/search?value=' + searchVal"
       x-bind:style="searchVal === '' ? 'pointer-events: none;':''"
       x-bind:class="searchVal === '' ? 'text-gray-400':'bg-white text-gray-900'"
-      class="block text-center w-full mt-3 rounded-md px-2.5 py-1.5 text-sm font-semibold shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
+      class="block text-center w-full mt-3 rounded-md px-2.5 py-1.5 text-sm font-semibold shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 transition-hover"
     >
       Search
     </a>
+    <a href="/new-embeddings" class="block mt-24 text-center text-gray-500 font-medium hover:text-gray-600 transition-hover">Generate new embedding</a>
   </div>
 </div>
 {% endblock content %}

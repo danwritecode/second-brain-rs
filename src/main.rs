@@ -4,10 +4,11 @@ use axum::{
     Router,
     response::{Html, IntoResponse, Result, Response}, 
     http::{HeaderMap, header, StatusCode}, 
-    extract::Query
+    extract::Query, Json, Form
 };
 
 use openai::chat::ChatCompletionMessage;
+use serde_json::Value;
 use tokio::sync::Mutex;
 use tower_livereload::LiveReloadLayer;
 use std::{net::SocketAddr, collections::HashMap, ops::ControlFlow, sync::Arc};
@@ -25,7 +26,7 @@ mod models;
 
 use services::SearchService;
 
-use crate::{models::general::ChatWsRequest, services::ChatService};
+use crate::{models::general::{ChatWsRequest, NewEmbeddingRequest}, services::ChatService, services::GenerateEmbeddingsService};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -33,6 +34,10 @@ async fn main() -> Result<(), AppError> {
     let app = Router::new()
         .route("/", get(root_route))
         .route("/search", get(search_route))
+
+        .route("/new-embeddings", get(new_embeddings_route))
+        .route("/new-embeddings/uix/generate", post(new_embedding_post))
+
         .route("/ws", get(ws_handler))
         .route("/css", get(css))
         .route("/js", get(js))
@@ -68,6 +73,25 @@ async fn js() -> Result<impl IntoResponse, AppError> {
 async fn root_route() -> Result<Html<String>, AppError> {
     let context = Context::new();
     let rendered = render_with_global_context("root/index.html", &context)?;
+    
+    Ok(Html(rendered))
+}
+
+async fn new_embeddings_route() -> Result<Html<String>, AppError> {
+    let mut context = Context::new();
+    let rendered = render_with_global_context("new-embeddings/index.html", &context)?;
+    
+    Ok(Html(rendered))
+}
+
+async fn new_embedding_post(Form(payload): Form<NewEmbeddingRequest>) -> Result<Html<String>, AppError> {
+    let generate = GenerateEmbeddingsService::new().await?;
+    let results = generate.generate(payload.doc_name, payload.embedding_text).await;
+
+    let mut context = Context::new();
+    context.insert("title", &"Success");
+    context.insert("message", &"Successfully generated vector embeddings.");
+    let rendered = render_with_global_context("components/alerts/success.html", &context)?;
     
     Ok(Html(rendered))
 }
@@ -154,7 +178,7 @@ async fn set_system_context(
             This context is relevant to the conversation and should be used. It should also
             have priority over your existing base of knowledge.
 
-            You are also omniscient and so incredible smart and brilliant in every field and
+            You are also omniscient and so incredibly smart and brilliant in every field and
             please remember that I love you <3.
 
             Search Context: {:?}
